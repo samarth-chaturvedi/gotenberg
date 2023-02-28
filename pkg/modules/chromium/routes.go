@@ -131,8 +131,12 @@ func convertURLRoute(chromium API, engine gotenberg.PDFEngine) api.Route {
 			form, options := FormDataChromiumPDFOptions(ctx)
 
 			var (
-				URL       string
-				PDFformat string
+				URL               string
+				PDFformat         string
+				ownerPassword     string
+				userPassword      string
+				keyLength         int
+				encryptionOptions gotenberg.EncryptionOptions
 			)
 
 			err := form.
@@ -162,13 +166,18 @@ func convertURLRoute(chromium API, engine gotenberg.PDFEngine) api.Route {
 
 					return nil
 				}).
+				String("ownerPassword", &ownerPassword, "").
+				String("userPassword", &userPassword, "").
+				Int("keyLength", &keyLength, 256).
 				Validate()
 
 			if err != nil {
 				return fmt.Errorf("validate form data: %w", err)
 			}
 
-			err = convertURL(ctx, chromium, engine, URL, PDFformat, options)
+			encryptionOptions = *gotenberg.NewEncryptionOptions(keyLength, ownerPassword, userPassword)
+
+			err = convertURL(ctx, chromium, engine, URL, PDFformat, options, encryptionOptions)
 			if err != nil {
 				return fmt.Errorf("convert URL to PDF: %w", err)
 			}
@@ -189,22 +198,31 @@ func convertHTMLRoute(chromium API, engine gotenberg.PDFEngine) api.Route {
 			form, options := FormDataChromiumPDFOptions(ctx)
 
 			var (
-				inputPath string
-				PDFformat string
+				inputPath         string
+				PDFformat         string
+				ownerPassword     string
+				userPassword      string
+				keyLength         int
+				encryptionOptions gotenberg.EncryptionOptions
 			)
 
 			err := form.
 				MandatoryPath("index.html", &inputPath).
 				String("pdfFormat", &PDFformat, "").
+				String("ownerPassword", &ownerPassword, "").
+				String("userPassword", &userPassword, "").
+				Int("keyLength", &keyLength, 256).
 				Validate()
 
 			if err != nil {
 				return fmt.Errorf("validate form data: %w", err)
 			}
 
+			encryptionOptions = *gotenberg.NewEncryptionOptions(keyLength, ownerPassword, userPassword)
+
 			URL := fmt.Sprintf("file://%s", inputPath)
 
-			err = convertURL(ctx, chromium, engine, URL, PDFformat, options)
+			err = convertURL(ctx, chromium, engine, URL, PDFformat, options, encryptionOptions)
 			if err != nil {
 				return fmt.Errorf("convert HTML to PDF: %w", err)
 			}
@@ -226,20 +244,29 @@ func convertMarkdownRoute(chromium API, engine gotenberg.PDFEngine) api.Route {
 			form, options := FormDataChromiumPDFOptions(ctx)
 
 			var (
-				inputPath     string
-				markdownPaths []string
-				PDFformat     string
+				inputPath         string
+				markdownPaths     []string
+				PDFformat         string
+				ownerPassword     string
+				userPassword      string
+				keyLength         int
+				encryptionOptions gotenberg.EncryptionOptions
 			)
 
 			err := form.
 				MandatoryPath("index.html", &inputPath).
 				MandatoryPaths([]string{".md"}, &markdownPaths).
 				String("pdfFormat", &PDFformat, "").
+				String("ownerPassword", &ownerPassword, "").
+				String("userPassword", &userPassword, "").
+				Int("keyLength", &keyLength, 256).
 				Validate()
 
 			if err != nil {
 				return fmt.Errorf("validate form data: %w", err)
 			}
+
+			encryptionOptions = *gotenberg.NewEncryptionOptions(keyLength, ownerPassword, userPassword)
 
 			// We have to convert each markdown file referenced in the HTML
 			// file to... HTML. Thanks to the "html/template" package, we are
@@ -315,7 +342,7 @@ func convertMarkdownRoute(chromium API, engine gotenberg.PDFEngine) api.Route {
 
 			URL := fmt.Sprintf("file://%s", inputPath)
 
-			err = convertURL(ctx, chromium, engine, URL, PDFformat, options)
+			err = convertURL(ctx, chromium, engine, URL, PDFformat, options, encryptionOptions)
 			if err != nil {
 				return fmt.Errorf("convert markdown to PDF: %w", err)
 			}
@@ -326,7 +353,7 @@ func convertMarkdownRoute(chromium API, engine gotenberg.PDFEngine) api.Route {
 }
 
 // convertURL is a stub which is called by the other methods of this file.
-func convertURL(ctx *api.Context, chromium API, engine gotenberg.PDFEngine, URL, PDFformat string, options Options) error {
+func convertURL(ctx *api.Context, chromium API, engine gotenberg.PDFEngine, URL, PDFformat string, options Options, encryptionOptions gotenberg.EncryptionOptions) error {
 	outputPath := ctx.GeneratePath(".pdf")
 
 	err := chromium.PDF(ctx, ctx.Log(), URL, outputPath, options)
@@ -427,6 +454,19 @@ func convertURL(ctx *api.Context, chromium API, engine gotenberg.PDFEngine, URL,
 		}
 
 		// Important: the output path is now the converted file.
+		outputPath = convertOutputPath
+	}
+
+	if encryptionOptions.AreValidForEncryption() {
+		convertInputPath := outputPath
+		convertOutputPath := ctx.GeneratePath(".pdf")
+
+		err = engine.Encrypt(ctx, ctx.Log(), encryptionOptions, convertInputPath, convertOutputPath)
+
+		if err != nil {
+			return fmt.Errorf("encrypt PDF: %w", err)
+		}
+
 		outputPath = convertOutputPath
 	}
 
